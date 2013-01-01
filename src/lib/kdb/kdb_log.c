@@ -121,8 +121,12 @@ ulog_resize(kdb_hlog_t *ulog, uint32_t ulogentries, int ulogfd, uint_t recsize)
 
     new_size = sizeof (kdb_hlog_t);
 
-    new_block = (recsize / ULOG_BLOCK) + 1;
-    new_block *= ULOG_BLOCK;
+    if (recsize > ULOG_BLOCK) {
+        new_block = (recsize + ULOG_BLOCK - 1) / ULOG_BLOCK;
+        new_block *= ULOG_BLOCK;
+    }
+    else
+	new_block = ULOG_BLOCK;
 
     new_size += ulogentries * new_block;
 
@@ -204,9 +208,11 @@ ulog_add_update(krb5_context context, kdb_incr_update_t *upd)
      * We need to overflow our sno, replicas will do full
      * resyncs once they see their sno > than the masters.
      */
-    if (cur_sno == (kdb_sno_t)-1)
+    if (cur_sno == (kdb_sno_t)-1 || cur_sno <= 0 ||
+        ulog->kdb_num > ulogentries) {
+        ulog->kdb_num = 0;
         cur_sno = 1;
-    else
+    } else
         cur_sno++;
 
     /*
@@ -236,29 +242,27 @@ ulog_add_update(krb5_context context, kdb_incr_update_t *upd)
     if ((retval = ulog_sync_update(ulog, indx_log)))
         return (retval);
 
-    if (ulog->kdb_num < ulogentries)
-        ulog->kdb_num++;
-
     ulog->kdb_last_sno = cur_sno;
     ulog->kdb_last_time = ktime;
 
-    /*
-     * Since this is a circular array, once we circled, kdb_first_sno is
-     * always kdb_entry_sno + 1.
-     */
-    if (cur_sno > ulogentries) {
-        i = upd->kdb_entry_sno % ulogentries;
+    /* This is a circular array; when we wrap, we have to adjust first_sno */
+
+    if (ulog->kdb_num < ulogentries)
+        ulog->kdb_num++;
+    else {
+        i = cur_sno % ulogentries;
         indx_log = (kdb_ent_header_t *)INDEX(ulog, i);
         ulog->kdb_first_sno = indx_log->kdb_entry_sno;
         ulog->kdb_first_time = indx_log->kdb_time;
-    } else if (cur_sno == 1) {
-        ulog->kdb_first_sno = 1;
-        ulog->kdb_first_time = indx_log->kdb_time;
     }
 
-    ulog_sync_header(ulog);
+    if (ulog->kdb_num == 1) {
+        ulog->kdb_first_sno = cur_sno;
+        ulog->kdb_first_time = ktime;
+    }
 
-    return (0);
+    retval = ulog_finish_update(context, upd);
+    return (retval);
 }
 
 /*
@@ -295,19 +299,6 @@ ulog_finish_update(krb5_context context, kdb_incr_update_t *upd)
 }
 
 /*
- * Set the header log details on the slave and sync it to file.
- */
-static void
-ulog_finish_update_slave(kdb_hlog_t *ulog, kdb_last_t lastentry)
-{
-
-    ulog->kdb_last_sno = lastentry.last_sno;
-    ulog->kdb_last_time = lastentry.last_time;
-
-    ulog_sync_header(ulog);
-}
-
-/*
  * Delete an entry to the update log.
  */
 krb5_error_code
@@ -320,7 +311,7 @@ ulog_delete_update(krb5_context context, kdb_incr_update_t *upd)
 }
 
 /*
- * Used by the slave or master (during ulog_check) to update it's hash db from
+ * Used by the slave or master (during ulog_check) to update its hash db from
  * the incr update log.
  *
  * Must be called with lock held.
@@ -340,25 +331,24 @@ ulog_replay(krb5_context context, kdb_incr_result_t *incr_ret, char **db_args)
 
     INIT_ULOG(context);
 
+    if (log_ctx && log_ctx->iproprole == IPROP_SLAVE) {
+        if ((retval = ulog_lock(context, KRB5_LOCKMODE_EXCLUSIVE)))
+            return (retval);
+    }
+
     no_of_updates = incr_ret->updates.kdb_ulog_t_len;
     upd = incr_ret->updates.kdb_ulog_t_val;
     fupd = upd;
-
-    /*
-     * We reset last_sno and last_time to 0, if krb5_db2_db_put_principal
-     * or krb5_db2_db_delete_principal fail.
-     */
-    errlast.last_sno = (unsigned int)0;
-    errlast.last_time.seconds = (unsigned int)0;
-    errlast.last_time.useconds = (unsigned int)0;
 
     if ((retval = krb5_db_open(context, db_args,
                                KRB5_KDB_OPEN_RW|KRB5_KDB_SRV_TYPE_ADMIN)))
         goto cleanup;
 
     for (i = 0; i < no_of_updates; i++) {
+#if 0
         if (!upd->kdb_commit)
             continue;
+#endif
 
         if (upd->kdb_deleted) {
             dbprincstr = malloc((upd->kdb_princ_name.utf8str_t_len
@@ -413,6 +403,94 @@ ulog_replay(krb5_context context, kdb_incr_result_t *incr_ret, char **db_args)
                 goto cleanup;
         }
 
+        if (log_ctx && log_ctx->iproprole == IPROP_SLAVE &&
+            upd->kdb_entry_sno >= 1 &&
+            ulog->kdb_hmagic == KDB_ULOG_HDR_MAGIC &&
+            ulog->kdb_state == KDB_STABLE) {
+
+            uint32_t            ulogentries, indx, upd_size, recsize;
+            int                 ulogfd;
+            kdb_ent_header_t    *indx_log;
+            XDR                 xdrs;
+
+            ulogfd = log_ctx->ulogfd;
+
+            ulogentries = log_ctx->ulogentries;
+            indx = (upd->kdb_entry_sno - 1) % ulogentries;
+
+            upd_size = xdr_sizeof((xdrproc_t)xdr_kdb_incr_update_t, upd);
+            recsize = sizeof(kdb_ent_header_t) + upd_size;
+
+            if (recsize > ulog->kdb_block) {
+                if ((retval = ulog_resize(ulog, ulogentries, ulogfd, recsize)))
+                    goto cleanup;
+                ulog_sync_header(ulog);
+            }
+
+            indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
+            (void) memset(indx_log, 0, ulog->kdb_block);
+
+            indx_log->kdb_umagic = KDB_ULOG_MAGIC;
+            indx_log->kdb_entry_size = upd_size;
+            indx_log->kdb_entry_sno = upd->kdb_entry_sno;
+            indx_log->kdb_time = upd->kdb_time;
+            indx_log->kdb_commit = TRUE;
+
+            xdrmem_create(&xdrs, (char *)indx_log->entry_data,
+                          indx_log->kdb_entry_size, XDR_ENCODE);
+
+            if (!xdr_kdb_incr_update_t(&xdrs, upd)) {
+                retval = KRB5_LOG_CONV;
+                goto cleanup;
+            }
+
+            if ((retval = ulog_sync_update(ulog, indx_log)))
+                goto cleanup;
+
+            if (ulog->kdb_num < 0 || ulog->kdb_num > ulogentries)
+                (void) ulog_init_header(context, recsize);
+
+            ulog->kdb_last_sno = upd->kdb_entry_sno;
+            ulog->kdb_last_time = upd->kdb_time;
+
+            /*
+             * Allow the first entry to not reside in the ulog.
+             * As the first update is received, populate the first entry
+             * with the last serial info received from the full resync.
+             */
+            if (ulog->kdb_first_sno == 0 && ulog->kdb_num == 0) {
+                ulog->kdb_first_sno = upd->kdb_entry_sno;
+                ulog->kdb_first_time = upd->kdb_time;
+            }
+
+            if (ulog->kdb_num < ulogentries)
+                ulog->kdb_num++;
+            else {
+                /*
+                 * The ulog is full, so we should update the first_sno
+                 * based on the first entry in the circular buffer.
+                 */
+                ulog->kdb_first_sno = ulog->kdb_last_sno - ulogentries + 1;
+                indx = (ulog->kdb_first_sno - 1) % ulogentries;
+                indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
+
+                if (indx_log->kdb_umagic == KDB_ULOG_MAGIC &&
+                    indx_log->kdb_entry_sno == ulog->kdb_first_sno) {
+                    ulog->kdb_first_time = indx_log->kdb_time;
+                } else {
+                    /*
+                     * The individual entry is corrupt; just reset the
+                     * ulog to the last entry rather than disable the log.
+                     * Hopefully, this won't ever occur.
+                     */
+                    ulog->kdb_first_sno = ulog->kdb_last_sno;
+                    ulog->kdb_first_time = ulog->kdb_last_time;
+                    ulog->kdb_num = 1;
+                }
+                (void) ulog_sync_header(ulog);
+            }
+        }
+        
         upd++;
     }
 
@@ -421,10 +499,8 @@ cleanup:
         ulog_free_entries(fupd, no_of_updates);
 
     if (log_ctx && (log_ctx->iproprole == IPROP_SLAVE)) {
-        if (retval)
-            ulog_finish_update_slave(ulog, errlast);
-        else
-            ulog_finish_update_slave(ulog, incr_ret->lastentry);
+        (void) ulog_sync_header(ulog);
+        (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
     }
 
     return (retval);
@@ -441,15 +517,32 @@ ulog_check(krb5_context context, kdb_hlog_t *ulog, char **db_args)
 {
     XDR                 xdrs;
     krb5_error_code     retval = 0;
-    unsigned int        i;
+    unsigned int        i, j, ulogentries, start_sno;
     kdb_ent_header_t    *indx_log;
     kdb_incr_update_t   *upd = NULL;
     kdb_incr_result_t   *incr_ret = NULL;
 
     ulog->kdb_state = KDB_STABLE;
 
+    ulogentries = context->kdblog_context->ulogentries;
+
+    /*
+     * Edge condition/optimization.
+     * Reset ulog->kdb_first_* to equal the last entry if the log is empty.
+     */
+    if (ulog->kdb_num == 0 && ulog->kdb_first_sno == 0 &&
+        ulog->kdb_last_sno > 0) {
+
+        ulog->kdb_first_sno = ulog->kdb_last_sno;
+        ulog->kdb_first_time = ulog->kdb_last_time;
+    }
+
+    /* On a slave, the circular buffer may not begin at index 0. */
+    start_sno = ulog->kdb_last_sno - ulog->kdb_num + 1;
+    
     for (i = 0; i < ulog->kdb_num; i++) {
-        indx_log = (kdb_ent_header_t *)INDEX(ulog, i);
+        j = (start_sno + i - 1) % ulogentries;
+        indx_log = (kdb_ent_header_t *)INDEX(ulog, j);
 
         if (indx_log->kdb_umagic != KDB_ULOG_MAGIC) {
             /*
@@ -547,6 +640,35 @@ ulog_reset(kdb_hlog_t *ulog)
 }
 
 /*
+ * Re-init the log header.
+ */
+krb5_error_code
+ulog_init_header(krb5_context context, uint32_t recsize)
+{
+    kdb_log_context     *log_ctx;
+    kdb_hlog_t          *ulog = NULL;
+    krb5_error_code     retval;
+    uint_t              block_min;
+    
+    
+    INIT_ULOG(context);
+    
+    /* The caller should already have a lock, but ensure it is exclusive. */
+    if ((retval = ulog_lock(context, KRB5_LOCKMODE_EXCLUSIVE)))
+        return retval;
+    ulog_reset(ulog);
+
+    block_min = ULOG_BLOCK;  /* Should this be min(ULOG_BLOCK, pagesize)? */
+    if (recsize > block_min)
+        ulog->kdb_block = ((recsize + block_min - 1) & (~(block_min-1)));
+
+    ulog_sync_header(ulog);
+
+    /* The caller is responsible for unlocking... */
+    return (0);
+}
+
+/*
  * Map the log file to memory for performance and simplicity.
  *
  * Called by: if iprop_enabled then ulog_map();
@@ -613,8 +735,12 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries,
             return (errno);
         }
 
-        if ((caller == FKADMIND) || (caller == FKCOMMAND))
+        if ((caller == FKADMIND) || (caller == FKCOMMAND) || (caller == FKPROPD)) {
+            if (ulogentries < 2)                /* Min log entries = 2 */
+                return (EINVAL);
+            
             ulog_filesize += ulogentries * ULOG_BLOCK;
+        }
 
         if (extend_file_to(ulogfd, ulog_filesize) < 0)
             return errno;
@@ -681,13 +807,13 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries,
         return (0);
     }
 
-    if ((caller == FKPROPLOG) || (caller == FKPROPD)) {
+    if (caller == FKPROPLOG) {
         /* kproplog and kpropd don't need to do anything else. */
         ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
         return (0);
     }
 
-    if (caller == FKADMIND) {
+    if (caller == FKADMIND || caller == FKPROPD) {
         switch (ulog->kdb_state) {
         case KDB_STABLE:
         case KDB_UNSTABLE:
@@ -710,16 +836,19 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries,
             return (KRB5_LOG_ERROR);
         }
     }
-    assert(caller == FKADMIND || caller == FKCOMMAND);
 
+    if (ulog->kdb_num == 0 && ulog->kdb_first_sno == 0 && ulog->kdb_last_sno) {
+        ulog->kdb_first_sno = ulog->kdb_last_sno;
+        ulog->kdb_first_time = ulog->kdb_last_time;
+    }
+        
     /*
      * Reinit ulog if the log is being truncated or expanded after
      * we have circled.
      */
     if (ulog->kdb_num != ulogentries) {
-        if ((ulog->kdb_num != 0) &&
-            ((ulog->kdb_last_sno > ulog->kdb_num) ||
-             (ulog->kdb_num > ulogentries))) {
+        if (ulog->kdb_num > ulogentries ||
+            ulog->kdb_first_sno < ulog->kdb_last_sno - ulog->kdb_num) {
 
             ulog_reset(ulog);
             ulog_sync_header(ulog);
@@ -729,6 +858,7 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries,
          * Expand ulog if we have specified a greater size
          */
         if (ulog->kdb_num < ulogentries) {
+            ulog_filesize = sizeof (kdb_hlog_t);
             ulog_filesize += ulogentries * ulog->kdb_block;
 
             if (extend_file_to(ulogfd, ulog_filesize) < 0) {
@@ -763,7 +893,18 @@ ulog_get_entries(krb5_context context,          /* input - krb5 lib config */
     INIT_ULOG(context);
     ulogentries = log_ctx->ulogentries;
 
-    retval = ulog_lock(context, KRB5_LOCKMODE_SHARED);
+    retval = ulog_lock(context, KRB5_LOCKMODE_SHARED | KRB5_LOCKMODE_DONTBLOCK);
+    if (0
+#ifdef EWOULDBLOCK
+        || retval == EWOULDBLOCK
+#endif
+#ifdef EAGAIN
+        || retval == EAGAIN
+#endif
+        ) {
+        ulog_handle->ret = UPDATE_BUSY;
+        return (0);
+    }
     if (retval)
         return retval;
 
@@ -771,6 +912,23 @@ ulog_get_entries(krb5_context context,          /* input - krb5 lib config */
      * Check to make sure we don't have a corrupt ulog first.
      */
     if (ulog->kdb_state == KDB_CORRUPT) {
+        ulog_handle->ret = UPDATE_ERROR;
+        (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
+        return (KRB5_LOG_CORRUPT);
+    }
+
+    /*
+     * Defer a full resync when no log history is present to avoid looping.
+     */
+    if (ulog->kdb_num == 0 && ulog->kdb_last_sno == 0) {
+        ulog_handle->ret = UPDATE_BUSY;
+        (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
+        return (0);
+    } else if (ulog->kdb_last_sno <= 0) {
+        /*
+         * This should never happen. last_sno should only be zero if there
+         * are no log entries and should never be negative.
+         */
         ulog_handle->ret = UPDATE_ERROR;
         (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
         return (KRB5_LOG_CORRUPT);
@@ -795,108 +953,124 @@ ulog_get_entries(krb5_context context,          /* input - krb5 lib config */
         (last.last_sno < ulog->kdb_first_sno) ||
         (last.last_sno == 0)) {
         ulog_handle->lastentry.last_sno = ulog->kdb_last_sno;
+        ulog_handle->lastentry.last_time = ulog->kdb_last_time;
+        
         (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
         (void) krb5_db_unlock(context);
         ulog_handle->ret = UPDATE_FULL_RESYNC_NEEDED;
         return (0);
-    } else if (last.last_sno <= ulog->kdb_last_sno) {
-        sno = last.last_sno;
+    }
 
-        indx = (sno - 1) % ulogentries;
+    sno = last.last_sno;
 
-        indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
-
-        /*
-         * Validate the time stamp just to make sure it was the same sno
-         */
-        if ((indx_log->kdb_time.seconds == last.last_time.seconds) &&
-            (indx_log->kdb_time.useconds == last.last_time.useconds)) {
-
-            /*
-             * If we have the same sno we return success
-             */
-            if (last.last_sno == ulog->kdb_last_sno) {
-                (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
-                (void) krb5_db_unlock(context);
-                ulog_handle->ret = UPDATE_NIL;
-                return (0);
-            }
-
-            count = ulog->kdb_last_sno - sno;
-
-            ulog_handle->updates.kdb_ulog_t_val =
-                (kdb_incr_update_t *)malloc(
-                    sizeof (kdb_incr_update_t) * count);
-
-            upd = ulog_handle->updates.kdb_ulog_t_val;
-
-            if (upd == NULL) {
-                (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
-                (void) krb5_db_unlock(context);
-                ulog_handle->ret = UPDATE_ERROR;
-                return (errno);
-            }
-
-            while (sno < ulog->kdb_last_sno) {
-                indx = sno % ulogentries;
-
-                indx_log = (kdb_ent_header_t *)
-                    INDEX(ulog, indx);
-
-                (void) memset(upd, 0,
-                              sizeof (kdb_incr_update_t));
-                xdrmem_create(&xdrs,
-                              (char *)indx_log->entry_data,
-                              indx_log->kdb_entry_size, XDR_DECODE);
-                if (!xdr_kdb_incr_update_t(&xdrs, upd)) {
-                    (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
-                    (void) krb5_db_unlock(context);
-                    ulog_handle->ret = UPDATE_ERROR;
-                    return (KRB5_LOG_CONV);
-                }
-                /*
-                 * Mark commitment since we didn't
-                 * want to decode and encode the
-                 * incr update record the first time.
-                 */
-                upd->kdb_commit = indx_log->kdb_commit;
-
-                upd++;
-                sno++;
-            } /* while */
-
-            ulog_handle->updates.kdb_ulog_t_len = count;
-
-            ulog_handle->lastentry.last_sno = ulog->kdb_last_sno;
-            ulog_handle->lastentry.last_time.seconds =
-                ulog->kdb_last_time.seconds;
-            ulog_handle->lastentry.last_time.useconds =
-                ulog->kdb_last_time.useconds;
-            ulog_handle->ret = UPDATE_OK;
+    /*
+     * Validate the client state, including timestamp, against the ulog.
+     * Note: The first entry may not be in the ulog if the slave was
+     * promoted to a master and only has a limited ulog history.
+     */
+    if (sno == ulog->kdb_last_sno) {
+        if (last.last_time.seconds == ulog->kdb_last_time.seconds &&
+            last.last_time.useconds == ulog->kdb_last_time.useconds) {
 
             (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
             (void) krb5_db_unlock(context);
-
+            ulog_handle->ret = UPDATE_NIL;
             return (0);
         } else {
-            /*
-             * We have time stamp mismatch or we no longer have
-             * the slave's last sno, so we brute force it
-             */
+
+            ulog_handle->lastentry.last_sno = ulog->kdb_last_sno;
+            ulog_handle->lastentry.last_time = ulog->kdb_last_time;
+
             (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
             (void) krb5_db_unlock(context);
             ulog_handle->ret = UPDATE_FULL_RESYNC_NEEDED;
+            return (0);
+        }
+    }
+    if (sno == ulog->kdb_first_sno) {
+        if (last.last_time.seconds != ulog->kdb_first_time.seconds ||
+            last.last_time.useconds != ulog->kdb_first_time.useconds) {
 
+            ulog_handle->lastentry.last_sno = ulog->kdb_last_sno;
+            ulog_handle->lastentry.last_time = ulog->kdb_last_time;
+
+            (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
+            (void) krb5_db_unlock(context);
+            ulog_handle->ret = UPDATE_FULL_RESYNC_NEEDED;
+            return (0);
+        }
+    } else {
+        indx = (sno - 1) % ulogentries;
+        indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
+
+        if (indx_log->kdb_time.seconds != last.last_time.seconds ||
+            indx_log->kdb_time.useconds != last.last_time.useconds) {
+
+            ulog_handle->lastentry.last_sno = ulog->kdb_last_sno;
+            ulog_handle->lastentry.last_time = ulog->kdb_last_time;
+
+            (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
+            (void) krb5_db_unlock(context);
+            ulog_handle->ret = UPDATE_FULL_RESYNC_NEEDED;
             return (0);
         }
     }
 
     /*
-     * Should never get here, return error
+     * We have now determined the client needs a list of incremental updates.
      */
+    count = ulog->kdb_last_sno - sno;
+
+    ulog_handle->updates.kdb_ulog_t_val =
+        (kdb_incr_update_t *)malloc(sizeof (kdb_incr_update_t) * count);
+
+    upd = ulog_handle->updates.kdb_ulog_t_val;
+
+    if (upd == NULL) {
+        (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
+        (void) krb5_db_unlock(context);
+        ulog_handle->ret = UPDATE_ERROR;
+        return (errno);
+    }
+
+    while (sno < ulog->kdb_last_sno) {
+        indx = sno % ulogentries;
+        indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
+
+        (void) memset(upd, 0, sizeof (kdb_incr_update_t));
+        xdrmem_create(&xdrs,
+                      (char *)indx_log->entry_data,
+                      indx_log->kdb_entry_size, XDR_DECODE);
+        if (!xdr_kdb_incr_update_t(&xdrs, upd)) {
+            (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
+            (void) krb5_db_unlock(context);
+
+            ulog_free_entries(ulog_handle->updates.kdb_ulog_t_val,
+                              sno - last.last_sno);
+            ulog_handle->updates.kdb_ulog_t_val = NULL;
+            
+            ulog_handle->ret = UPDATE_ERROR;
+            return (KRB5_LOG_CONV);
+        }
+        upd->kdb_commit = TRUE;
+#if 0
+        upd->kdb_commit = indx_log->kdb_commit;
+#endif
+
+        upd++;
+        sno++;
+    } /* while */
+
+    ulog_handle->updates.kdb_ulog_t_len = count;
+
+    ulog_handle->lastentry.last_sno = ulog->kdb_last_sno;
+    ulog_handle->lastentry.last_time = ulog->kdb_last_time;
+    ulog_handle->ret = UPDATE_OK;
+
     (void) ulog_lock(context, KRB5_LOCKMODE_UNLOCK);
-    ulog_handle->ret = UPDATE_ERROR;
-    return (KRB5_LOG_ERROR);
+    (void) krb5_db_unlock(context);
+
+    return (0);
 }
 
 krb5_error_code
