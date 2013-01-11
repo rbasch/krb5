@@ -400,21 +400,23 @@ print_attr(kdbe_val_t *val, int vverbose)
  * Print the update entry information
  */
 static void
-print_update(kdb_hlog_t *ulog, uint32_t entry, unsigned int verbose)
+print_update(krb5_context kcontext, uint32_t entry, unsigned int verbose)
 {
     XDR                 xdrs;
     uint32_t            start_sno, i, j, indx;
     char                *dbprinc;
+    uint32_t		ulogentries = kcontext->kdblog_context->ulogentries;
+    kdb_hlog_t		*ulog = kcontext->kdblog_context->ulog;
     kdb_ent_header_t    *indx_log;
     kdb_incr_update_t   upd;
 
-    if (entry && (entry < ulog->kdb_num))
+    if (entry > 0 && entry < ulog->kdb_num)
         start_sno = ulog->kdb_last_sno - entry;
     else
-        start_sno = ulog->kdb_first_sno - 1;
+        start_sno = ulog->kdb_last_sno - ulog->kdb_num;
 
     for (i = start_sno; i < ulog->kdb_last_sno; i++) {
-        indx = i % ulog->kdb_num;
+        indx = i % ulogentries;
 
         indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
 
@@ -543,7 +545,7 @@ main(int argc, char **argv)
     (void) printf(_("\nKerberos update log (%s)\n"),
                   params.iprop_logfile);
 
-    if (ulog_map(context, params.iprop_logfile, 0,
+    if (ulog_map(context, params.iprop_logfile, params.iprop_ulogsize,
                  reset ? FKADMIND : FKPROPLOG, db_args)) {
         (void) fprintf(stderr, _("Unable to map log file %s\n\n"),
                        params.iprop_logfile);
@@ -631,7 +633,7 @@ main(int argc, char **argv)
     }
 
     if ((!headeronly) && ulog->kdb_num) {
-        print_update(ulog, entry, verbose);
+        print_update(context, entry, verbose);
     }
 
     (void) printf("\n");
