@@ -121,8 +121,12 @@ ulog_resize(kdb_hlog_t *ulog, uint32_t ulogentries, int ulogfd, uint_t recsize)
 
     new_size = sizeof (kdb_hlog_t);
 
-    new_block = (recsize / ULOG_BLOCK) + 1;
-    new_block *= ULOG_BLOCK;
+    if (recsize > ULOG_BLOCK) {
+        new_block = (recsize + ULOG_BLOCK - 1) / ULOG_BLOCK;
+        new_block *= ULOG_BLOCK;
+    }
+    else
+	new_block = ULOG_BLOCK;
 
     new_size += ulogentries * new_block;
 
@@ -544,6 +548,35 @@ ulog_reset(kdb_hlog_t *ulog)
     ulog->db_version_num = KDB_VERSION;
     ulog->kdb_state = KDB_STABLE;
     ulog->kdb_block = ULOG_BLOCK;
+}
+
+/*
+ * Re-init the log header.
+ */
+krb5_error_code
+ulog_init_header(krb5_context context, uint32_t recsize)
+{
+    kdb_log_context     *log_ctx;
+    kdb_hlog_t          *ulog = NULL;
+    krb5_error_code     retval;
+    uint_t              block_min;
+    
+    
+    INIT_ULOG(context);
+    
+    /* The caller should already have a lock, but ensure it is exclusive. */
+    if ((retval = ulog_lock(context, KRB5_LOCKMODE_EXCLUSIVE)))
+        return retval;
+    ulog_reset(ulog);
+
+    block_min = ULOG_BLOCK;  /* Should this be min(ULOG_BLOCK, pagesize)? */
+    if (recsize > block_min)
+        ulog->kdb_block = ((recsize + block_min - 1) & (~(block_min-1)));
+
+    ulog_sync_header(ulog);
+
+    /* The caller is responsible for unlocking... */
+    return (0);
 }
 
 /*
