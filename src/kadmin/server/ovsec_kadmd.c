@@ -110,7 +110,6 @@ static void usage()
                       "[-port port-number]\n"
                       "\t\t[-p path-to-kdb5_util] [-F dump-file]\n"
                       "\t\t[-K path-to-kprop] [-P pid_file]\n"
-                      "\t\t[-proponly]\n"
                       "\nwhere,\n\t[-x db_args]* - any number of database "
                       "specific arguments.\n"
                       "\t\t\tLook at each database documentation for "
@@ -205,7 +204,6 @@ static krb5_context context;
 static krb5_context hctx;
 
 int nofork = 0;
-int prop_only = 0;
 char *kdb5_util = KPROPD_DEFAULT_KDB5_UTIL;
 char *kprop = KPROPD_DEFAULT_KPROP;
 char *dump_file = KPROP_DEFAULT_FILE;
@@ -292,8 +290,6 @@ int main(int argc, char *argv[])
         } else if (strcmp(*argv, "-passwordserver") == 0) {
             kadm5_set_use_password_server ();
 #endif
-        } else if (strcmp(*argv, "-proponly") == 0) {
-            prop_only = 1;
         } else if(strcmp(*argv, "-port") == 0) {
             argc--; argv++;
             if(!argc)
@@ -404,15 +400,10 @@ int main(int argc, char *argv[])
     }
 
 #define server_handle ((kadm5_server_handle_t)global_server_handle)
-    if (prop_only
-        || (ret = loop_add_udp_port(server_handle->params.kpasswd_port))
+    if ((ret = loop_add_udp_port(server_handle->params.kpasswd_port))
         || (ret = loop_add_tcp_port(server_handle->params.kpasswd_port))
         || (ret = loop_add_rpc_service(server_handle->params.kadmind_port,
                                        KADM, KADMVERS, kadm_1))
-        )
-        /* Do nothing; our error handling will follow */
-        1;
-    if (ret
 #ifndef DISABLE_IPROP
         || (server_handle->params.iprop_enabled
             ? (ret = loop_add_rpc_service(server_handle->params.iprop_port,

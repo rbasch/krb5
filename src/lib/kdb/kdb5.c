@@ -2319,29 +2319,15 @@ krb5_dbe_cpw(krb5_context kcontext, krb5_keyblock *master_key,
 krb5_error_code
 krb5_db_create_policy(krb5_context kcontext, osa_policy_ent_t policy)
 {
-    kdb_log_context *log_ctx = kcontext->kdblog_context;
     krb5_error_code status = 0;
     kdb_vftabl *v;
 
     status = get_vftabl(kcontext, &v);
     if (status)
         return status;
-    status = ulog_lock(kcontext, KRB5_LOCKMODE_EXCLUSIVE);
-    if (status)
-        return status;
     if (v->create_policy == NULL)
         return KRB5_PLUGIN_OP_NOTSUPP;
-    status = v->create_policy(kcontext, policy);
-
-    /* iprop does not support policy mods; force full-resync (re-init ulog) */
-    if (!status && log_ctx && log_ctx->iproprole == IPROP_MASTER) {
-        kdb_hlog_t *ulog = NULL;
-        if ((ulog = log_ctx->ulog))
-            (void) ulog_init_header(kcontext, 0);
-    }
-
-    ulog_lock(kcontext, KRB5_LOCKMODE_UNLOCK);
-    return status;
+    return v->create_policy(kcontext, policy);
 }
 
 krb5_error_code
@@ -2361,58 +2347,15 @@ krb5_db_get_policy(krb5_context kcontext, char *name, osa_policy_ent_t *policy)
 krb5_error_code
 krb5_db_put_policy(krb5_context kcontext, osa_policy_ent_t policy)
 {
-    kdb_log_context *log_ctx = kcontext->kdblog_context;
     krb5_error_code status = 0;
     kdb_vftabl *v;
-    osa_policy_ent_t old_policy = NULL;
 
     status = get_vftabl(kcontext, &v);
     if (status)
         return status;
     if (v->put_policy == NULL)
         return KRB5_PLUGIN_OP_NOTSUPP;
-    status = ulog_lock(kcontext, KRB5_LOCKMODE_EXCLUSIVE);
-    if (status)
-        return status;
-    if (log_ctx && log_ctx->iproprole == IPROP_MASTER) {
-	if (v->get_policy)
-	    v->get_policy(kcontext, policy->name, &old_policy);
-    }
-    status = v->put_policy(kcontext, policy);
-
-    /*
-     * iprop does not support policy mods; force full-resync (re-init ulog).
-     * However, for policy changes, we need to first check if there were
-     * any *substantive* changes to avoid unnecessary resyncs.
-     */
-  
-    if (!status && log_ctx && log_ctx->iproprole == IPROP_MASTER) {
-	if (old_policy == NULL ||
-	    old_policy->version != policy->version ||
-	    old_policy->pw_min_life != policy->pw_min_life ||
-	    old_policy->pw_max_life != policy->pw_max_life ||
-	    old_policy->pw_min_length != policy->pw_min_length ||
-	    old_policy->pw_min_classes != policy->pw_min_classes ||
-	    old_policy->pw_history_num != policy->pw_history_num) {
-
-	    kdb_hlog_t *ulog = NULL;
-            if ((ulog = log_ctx->ulog))
-                (void) ulog_init_header(kcontext, 0);
-        } else if (policy->version > 1 &&
-		   (old_policy->pw_max_fail != policy->pw_max_fail ||
-		    old_policy->pw_failcnt_interval != policy->pw_failcnt_interval ||
-		    old_policy->pw_lockout_duration != policy->pw_lockout_duration)) {
-
-	    kdb_hlog_t *ulog = NULL;
-            if ((ulog = log_ctx->ulog))
-                (void) ulog_init_header(kcontext, 0);
-	}
-	if (old_policy)
-	    krb5_db_free_policy(kcontext, old_policy);
-    }
-
-    ulog_lock(kcontext, KRB5_LOCKMODE_UNLOCK);
-    return status;
+    return v->put_policy(kcontext, policy);
 }
 
 krb5_error_code
@@ -2433,7 +2376,6 @@ krb5_db_iter_policy(krb5_context kcontext, char *match_entry,
 krb5_error_code
 krb5_db_delete_policy(krb5_context kcontext, char *policy)
 {
-    kdb_log_context *log_ctx = kcontext->kdblog_context;
     krb5_error_code status = 0;
     kdb_vftabl *v;
 
@@ -2442,20 +2384,7 @@ krb5_db_delete_policy(krb5_context kcontext, char *policy)
         return status;
     if (v->delete_policy == NULL)
         return KRB5_PLUGIN_OP_NOTSUPP;
-    status = ulog_lock(kcontext, KRB5_LOCKMODE_EXCLUSIVE);
-    if (status)
-        return status;
-    status = v->delete_policy(kcontext, policy);
-
-    /* iprop does not support policy mods; force full-resync (re-init ulog) */
-    if (!status && log_ctx && log_ctx->iproprole == IPROP_MASTER) {
-        kdb_hlog_t *ulog = NULL;
-        if ((ulog = log_ctx->ulog))
-            (void) ulog_init_header(kcontext, 0);
-    }
-
-    ulog_lock(kcontext, KRB5_LOCKMODE_UNLOCK);
-    return status;
+    return v->delete_policy(kcontext, policy);
 }
 
 void
