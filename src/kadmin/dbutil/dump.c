@@ -2906,6 +2906,12 @@ load_db(argc, argv)
                 log_ctx->ulog->kdb_last_time.useconds =
                     last_useconds;
 
+                log_ctx->ulog->kdb_first_sno = last_sno;
+                log_ctx->ulog->kdb_first_time.seconds =
+                    last_seconds;
+                log_ctx->ulog->kdb_first_time.useconds =
+                    last_useconds;
+
                 /*
                  * Sync'ing the header is not necessary on any OS and
                  * filesystem where the filesystem and virtual memory block
