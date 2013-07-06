@@ -931,6 +931,19 @@ reinit:
             break;
         }
 
+	if (incr_ret->ret == UPDATE_FULL_RESYNC_NEEDED && frdone == 0) {
+	    /* Re-init ulog so we don't accidentally think we are current */
+	    if (log_ctx && log_ctx->iproprole) {
+		log_ctx->ulog->kdb_last_sno = 0;
+		log_ctx->ulog->kdb_last_time.seconds = 0;
+		log_ctx->ulog->kdb_last_time.useconds = 0;
+
+		log_ctx->ulog->kdb_first_sno = 0;
+		log_ctx->ulog->kdb_first_time.seconds = 0;
+		log_ctx->ulog->kdb_first_time.useconds = 0;
+	    }
+	}
+
         if (runonce == 1)
             goto done;
 
