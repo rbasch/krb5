@@ -2040,6 +2040,12 @@ process_k5beta6_record(fname, kcontext, filep, flags, linenop)
                 if (!error)
                     find_record_end(filep, fname, *linenop);
 
+                log_ctx->ulog->kdb_first_sno = last_sno;
+                log_ctx->ulog->kdb_first_time.seconds =
+                    last_seconds;
+                log_ctx->ulog->kdb_first_time.useconds =
+                    last_useconds;
+
                 /*
                  * We have either read in all the data or choked.
                  */
