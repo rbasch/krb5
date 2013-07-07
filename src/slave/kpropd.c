@@ -137,6 +137,7 @@ char    *temp_file_name;
 char    *kdb5_util = KPROPD_DEFAULT_KDB5_UTIL;
 char    *kerb_database = NULL;
 char    *acl_file_name = KPROPD_ACL_FILE;
+char    *admin_server = NULL;
 
 krb5_address    *sender_addr;
 krb5_address    *receiver_addr;
@@ -170,6 +171,7 @@ static void usage()
             progname);
     fprintf(stderr, _("\t[-F kerberos_db_file ] [-p kdb5_util_pathname]\n"));
     fprintf(stderr, _("\t[-x db_args]* [-P port] [-a acl_file]\n"));
+    fprintf(stderr, _("\t[-A admin_server]\n"));
     exit(1);
 }
 
@@ -981,7 +983,7 @@ reinit:
             goto done;
 
         /*
-         * Sleep for the specified poll interval (Default is 2 mts),
+         * Sleep for the specified poll interval (Default is 2 m),
          * or do a binary exponential backoff if we get an
          * UPDATE_BUSY signal
          */
@@ -993,6 +995,15 @@ reinit:
                         backoff_time);
             }
             (void) sleep(backoff_time);
+        } else if (incr_ret && full_ret &&
+                   incr_ret->ret == UPDATE_FULL_RESYNC_NEEDED &&
+                   full_ret->ret == UPDATE_OK) {
+            /*
+             * Poll immediately after a full resync to ensure we are
+             * up-to-date with any incremental changes received during
+             * the processing of the database transfer & reload.
+             */
+            1;
         } else {
             if (debug) {
                 fprintf(stderr, _("Waiting for %d seconds before checking "
@@ -1095,6 +1106,15 @@ void PRS(argv)
             word++;
             while (word && (ch = *word++)) {
                 switch(ch){
+                case 'A':
+                    if (*word)
+                        admin_server = word;
+                    else
+                        admin_server = *argv++;
+                    if (!admin_server)
+                        usage();
+                    word = 0;
+                    break;
                 case 'f':
                     if (*word)
                         file = word;
@@ -1240,6 +1260,11 @@ void PRS(argv)
     if (retval) {
         com_err(progname, retval, _("while initializing"));
         exit(1);
+    }
+    if (admin_server) {
+        char *x = params.admin_server;
+        params.admin_server = admin_server;
+        admin_server = x;
     }
     if (params.iprop_enabled == TRUE) {
         ulog_set_role(kpropd_context, IPROP_SLAVE);
