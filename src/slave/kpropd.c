@@ -1728,6 +1728,17 @@ load_database(context, kdb_util, database_file_name)
     if (error_ret) {
         com_err(progname, 0, _("%s returned a bad exit status (%d)"),
                 kdb_util, error_ret);
+
+        if (log_ctx && log_ctx->iproprole) {
+            log_ctx->ulog->kdb_last_sno = 0;
+            log_ctx->ulog->kdb_last_time.seconds = 0;
+            log_ctx->ulog->kdb_last_time.useconds = 0;
+
+            log_ctx->ulog->kdb_first_sno = 0;
+            log_ctx->ulog->kdb_first_time.seconds = 0;
+            log_ctx->ulog->kdb_first_time.useconds = 0;
+        }
+
         exit(1);
     }
     return;
