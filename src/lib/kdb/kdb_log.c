@@ -645,7 +645,13 @@ ulog_init_header(krb5_context context, uint32_t recsize)
     /* The caller should already have a lock, but ensure it is exclusive. */
     if ((retval = ulog_lock(context, KRB5_LOCKMODE_EXCLUSIVE)))
         return retval;
-    ulog_reset(ulog);
+
+    (void) memset(ulog, 0, sizeof (kdb_hlog_t));
+    ulog->kdb_hmagic = KDB_ULOG_HDR_MAGIC;
+    ulog->db_version_num = KDB_VERSION;
+    ulog->kdb_state = KDB_STABLE;
+    //ulog->kdb_block = ULOG_BLOCK;
+    //ulog_sync_header(ulog);
 
     block_min = ULOG_BLOCK;  /* Should this be min(ULOG_BLOCK, pagesize)? */
     if (recsize > block_min)
