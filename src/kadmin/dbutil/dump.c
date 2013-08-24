@@ -2873,57 +2873,18 @@ load_db(argc, argv)
         }
     }
 
-    if (log_ctx && log_ctx->iproprole) {
-        /*
-         * We don't want to take out the ulog out from underneath
-         * kadmind so we reinit the header log.
-         *
-         * We also don't want to add to the update log since we
-         * are doing a whole sale replace of the db, because:
-         *      we could easily exceed # of update entries
-         *      we could implicity delete db entries during a replace
-         *      no advantage in incr updates when entire db is replaced
-         */
-        if (!(flags & FLAG_UPDATE)) {
-            memset(log_ctx->ulog, 0, sizeof (kdb_hlog_t));
-
-            log_ctx->ulog->kdb_hmagic = KDB_ULOG_HDR_MAGIC;
-            log_ctx->ulog->db_version_num = KDB_VERSION;
-            log_ctx->ulog->kdb_state = KDB_STABLE;
-            log_ctx->ulog->kdb_block = ULOG_BLOCK;
-
-            log_ctx->iproprole = IPROP_NULL;
-
-            if (!add_update) {
-                if (!parse_iprop_header(buf, &load, &last_sno,
-                                           &last_seconds,
-                                           &last_useconds)) {
-                    exit_status++;
-                    goto error;
-                }
-
-                log_ctx->ulog->kdb_last_sno = last_sno;
-                log_ctx->ulog->kdb_last_time.seconds =
-                    last_seconds;
-                log_ctx->ulog->kdb_last_time.useconds =
-                    last_useconds;
-
-                log_ctx->ulog->kdb_first_sno = last_sno;
-                log_ctx->ulog->kdb_first_time.seconds =
-                    last_seconds;
-                log_ctx->ulog->kdb_first_time.useconds =
-                    last_useconds;
-
-                /*
-                 * Sync'ing the header is not necessary on any OS and
-                 * filesystem where the filesystem and virtual memory block
-                 * cache are unified, which is pretty much all cases that we
-                 * care about.  However, technically speaking we must msync()
-                 * in order for our writes here to be visible to a running
-                 * kpropd.
-                 */
-                ulog_sync_header(log_ctx->ulog);
-            }
+    /*
+     * If this is an iprop database restore, gather the header information
+     * but do not re-initialize the ulog until the new database is in-place.
+     * The ulog should reflect the active database (it should not reflect
+     * the new database until the new database is in place).
+     */
+    if (!(flags & FLAG_UPDATE) && (caller == FKLOAD) && !add_update) {
+        if (!parse_iprop_header(buf, &load, &last_sno,
+                                &last_seconds,
+                                &last_useconds)) {
+            exit_status++;
+            goto error;
         }
     }
 
@@ -2969,6 +2930,40 @@ load_db(argc, argv)
             exit_status++;
         }
     }
+    
+    if (log_ctx && log_ctx->iproprole && !(flags & FLAG_UPDATE) && !exit_status) {
+        /*
+         * Re-init the ulog with the new database information.
+         */
+        memset(log_ctx->ulog, 0, sizeof (kdb_hlog_t));
+
+        log_ctx->ulog->kdb_hmagic = KDB_ULOG_HDR_MAGIC;
+        log_ctx->ulog->db_version_num = KDB_VERSION;
+        log_ctx->ulog->kdb_state = KDB_STABLE;
+        log_ctx->ulog->kdb_block = ULOG_BLOCK;
+        
+        log_ctx->iproprole = IPROP_NULL;
+
+        if (!add_update) {
+            log_ctx->ulog->kdb_last_sno = last_sno;
+            log_ctx->ulog->kdb_last_time.seconds = last_seconds;
+            log_ctx->ulog->kdb_last_time.useconds = last_useconds;
+
+            log_ctx->ulog->kdb_first_sno = last_sno;
+            log_ctx->ulog->kdb_first_time.seconds = last_seconds;
+            log_ctx->ulog->kdb_first_time.useconds = last_useconds;
+
+            /*
+             * Sync'ing the header is not necessary on any OS and
+             * filesystem where the filesystem and virtual memory block
+             * cache are unified, which is pretty much all cases that we
+             * care about.  However, technically speaking we must msync()
+             * in order for our writes here to be visible to a running
+             * kpropd.
+             */
+            ulog_sync_header(log_ctx->ulog);
+        }
+    }
 
 error:
     /*
@@ -2979,20 +2974,6 @@ error:
      */
     if (!(flags & FLAG_UPDATE)) {
         if (exit_status) {
-
-	    /* Re-init ulog so we don't accidentally think we are current */
-            if (log_ctx && log_ctx->iproprole) {
-                log_ctx->ulog->kdb_last_sno = 0;
-                log_ctx->ulog->kdb_last_time.seconds = 0;
-                log_ctx->ulog->kdb_last_time.useconds = 0;
-
-                log_ctx->ulog->kdb_first_sno = 0;
-                log_ctx->ulog->kdb_first_time.seconds = 0;
-                log_ctx->ulog->kdb_first_time.useconds = 0;
-
-                ulog_sync_header(log_ctx->ulog);
-            }
-
             kret = krb5_db_destroy(kcontext, db5util_db_args);
             /*
              * Ignore a not supported error since there is nothing to do about
