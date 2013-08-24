@@ -2040,12 +2040,6 @@ process_k5beta6_record(fname, kcontext, filep, flags, linenop)
                 if (!error)
                     find_record_end(filep, fname, *linenop);
 
-                log_ctx->ulog->kdb_first_sno = last_sno;
-                log_ctx->ulog->kdb_first_time.seconds =
-                    last_seconds;
-                log_ctx->ulog->kdb_first_time.useconds =
-                    last_useconds;
-
                 /*
                  * We have either read in all the data or choked.
                  */
@@ -2539,6 +2533,32 @@ load_db(argc, argv)
         }
     }
 
+    if (!(flags & FLAG_UPDATE) && !add_update) {
+        unsigned int ipropx_version = IPROPX_VERSION_0;
+
+        if (!strncmp(buf, "ipropx ", sizeof("ipropx ") - 1))
+            sscanf(buf, "%s %u %u %u %u", iheader,
+                   &ipropx_version, &last_sno,
+                   &last_seconds, &last_useconds);
+        else
+            sscanf(buf, "%s %u %u %u", iheader, &last_sno,
+                   &last_seconds, &last_useconds);
+        
+        switch (ipropx_version) {
+        case IPROPX_VERSION_0:
+            load = &iprop_version;
+            break;
+        case IPROPX_VERSION_1:
+            load = &ipropx_1_version;
+            break;
+        default:
+            fprintf(stderr, _("%s: Unknown iprop dump version %d\n"),
+                    progname, ipropx_version);
+            exit_status++;
+            goto error;
+        }
+    }
+    
     if (log_ctx && log_ctx->iproprole) {
         if (add_update)
             caller = FKCOMMAND;
@@ -2553,58 +2573,6 @@ load_db(argc, argv)
             goto error;
         }
 
-        /*
-         * We don't want to take out the ulog out from underneath
-         * kadmind so we reinit the header log.
-         *
-         * We also don't want to add to the update log since we
-         * are doing a whole sale replace of the db, because:
-         *      we could easily exceed # of update entries
-         *      we could implicity delete db entries during a replace
-         *      no advantage in incr updates when entire db is replaced
-         */
-        if (!(flags & FLAG_UPDATE)) {
-            memset(log_ctx->ulog, 0, sizeof (kdb_hlog_t));
-
-            log_ctx->ulog->kdb_hmagic = KDB_ULOG_HDR_MAGIC;
-            log_ctx->ulog->db_version_num = KDB_VERSION;
-            log_ctx->ulog->kdb_state = KDB_STABLE;
-            log_ctx->ulog->kdb_block = ULOG_BLOCK;
-
-            log_ctx->iproprole = IPROP_NULL;
-
-            if (!add_update) {
-                unsigned int ipropx_version = IPROPX_VERSION_0;
-
-                if (!strncmp(buf, "ipropx ", sizeof("ipropx ") - 1))
-                    sscanf(buf, "%s %u %u %u %u", iheader,
-                           &ipropx_version, &last_sno,
-                           &last_seconds, &last_useconds);
-                else
-                    sscanf(buf, "%s %u %u %u", iheader, &last_sno,
-                           &last_seconds, &last_useconds);
-
-                switch (ipropx_version) {
-                case IPROPX_VERSION_0:
-                    load = &iprop_version;
-                    break;
-                case IPROPX_VERSION_1:
-                    load = &ipropx_1_version;
-                    break;
-                default:
-                    fprintf(stderr, _("%s: Unknown iprop dump version %d\n"),
-                            progname, ipropx_version);
-                    exit_status++;
-                    goto error;
-                }
-
-                log_ctx->ulog->kdb_last_sno = last_sno;
-                log_ctx->ulog->kdb_last_time.seconds =
-                    last_seconds;
-                log_ctx->ulog->kdb_last_time.useconds =
-                    last_useconds;
-            }
-        }
     }
 
     if (restore_dump(progname, kcontext, (dumpfile) ? dumpfile : stdin_name,
@@ -2650,6 +2618,30 @@ load_db(argc, argv)
         }
     }
 
+    /*
+     * Re-init the ulog with the new database information.
+     */
+    if (log_ctx && log_ctx->iproprole && !exit_status && !(flags & FLAG_UPDATE)) {
+        memset(log_ctx->ulog, 0, sizeof (kdb_hlog_t));
+
+        log_ctx->ulog->kdb_hmagic = KDB_ULOG_HDR_MAGIC;
+        log_ctx->ulog->db_version_num = KDB_VERSION;
+        log_ctx->ulog->kdb_state = KDB_STABLE;
+        log_ctx->ulog->kdb_block = ULOG_BLOCK;
+
+        log_ctx->iproprole = IPROP_NULL;
+
+        if (!add_update) {
+            log_ctx->ulog->kdb_last_sno = last_sno;
+            log_ctx->ulog->kdb_last_time.seconds = last_seconds;
+            log_ctx->ulog->kdb_last_time.useconds = last_useconds;
+
+            log_ctx->ulog->kdb_first_sno = last_sno;
+            log_ctx->ulog->kdb_first_time.seconds = last_seconds;
+            log_ctx->ulog->kdb_first_time.useconds = last_useconds;
+        }
+    }
+
 error:
     /*
      * If not an update: if there was an error, destroy the temp database,
@@ -2659,17 +2651,6 @@ error:
      */
     if (!(flags & FLAG_UPDATE)) {
         if (exit_status) {
-
-	    /* Re-init ulog so we don't accidentally think we are current */
-            if (log_ctx && log_ctx->iproprole) {
-                log_ctx->ulog->kdb_last_sno = 0;
-                log_ctx->ulog->kdb_last_time.seconds = 0;
-                log_ctx->ulog->kdb_last_time.useconds = 0;
-
-                log_ctx->ulog->kdb_first_sno = 0;
-                log_ctx->ulog->kdb_first_time.seconds = 0;
-                log_ctx->ulog->kdb_first_time.useconds = 0;
-            }
 
             kret = krb5_db_destroy(kcontext, db5util_db_args);
             /*
