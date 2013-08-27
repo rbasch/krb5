@@ -459,12 +459,16 @@ parse_iprop_header(char *buf, dump_version **dv, uint32_t *last_sno,
  * ulog, else return 0.
  */
 static int
-current_dump_sno_in_ulog(char *ifile, kdb_hlog_t *ulog)
+current_dump_sno_in_ulog(char *ifile, kdb_log_context *log_ctx)
 {
     dump_version *junk;
     uint32_t last_sno, last_seconds, last_useconds;
     char buf[BUFSIZ];
     FILE *f;
+    uint32_t i, indx;
+    uint32_t ulogentries = log_ctx->ulogentries;
+    kdb_hlog_t *ulog = log_ctx->ulog;
+    kdb_ent_header_t * indx_log;
 
     if (ulog->kdb_last_sno == 0)
         return 0;              /* nothing in ulog */
@@ -481,13 +485,42 @@ current_dump_sno_in_ulog(char *ifile, kdb_hlog_t *ulog)
                             &last_useconds))
         return 0;
 
+    /*
+     * Perform a quick test, but it can't be relied upon as the only test.
+     */
     if (ulog->kdb_first_sno > last_sno ||
         ulog->kdb_first_time.seconds > last_seconds ||
         (ulog->kdb_first_time.seconds == last_seconds &&
         ulog->kdb_first_time.useconds > last_useconds))
         return 0;
 
-    return 1;
+    /*
+     * If the dump is the most recent, don't iterate through the ulog.
+     * It enables hierarchical propagation even when the slave hasn't
+     * collected any updates in its ulog yet.
+     */
+    if (ulog->kdb_last_time.seconds == last_seconds &&
+        ulog->kdb_last_time.useconds == last_useconds &&
+        ulog->kdb_last_sno == last_sno)
+        return 1;
+
+    /*
+     * Iterate through the ulog looking for an exact match.
+     */
+    for (i = ulog->kdb_last_sno - ulog->kdb_num; i < ulog->kdb_last_sno; i++) {
+        indx = i % ulogentries;
+        indx_log = (kdb_ent_header_t *)INDEX(ulog, indx);
+        if (indx_log->kdb_umagic != KDB_ULOG_MAGIC) {
+            (void) fprintf(stderr, _("Corrupt update entry\n"));
+            return 0;
+        }
+        if (indx_log->kdb_time.seconds == last_seconds &&
+            indx_log->kdb_time.useconds == last_useconds &&
+            indx_log->kdb_entry_sno == last_sno)
+            return 1;
+    }
+
+    return 0;
 }
 
 
@@ -1372,7 +1405,7 @@ dump_db(argc, argv)
                       "use only for iprop dumps"));
             goto error;
         }
-        if (current_dump_sno_in_ulog(ofile, log_ctx->ulog))
+        if (current_dump_sno_in_ulog(ofile, log_ctx))
             return;
     }
 
