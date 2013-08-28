@@ -897,12 +897,17 @@ krb5_db_put_principal(krb5_context kcontext, krb5_db_entry *entry)
             goto clean_n_exit;
         if ((status = ulog_conv_2logentry(kcontext, entry, upd)))
             goto clean_n_exit;
-    }
 
-    status = ulog_lock(kcontext, KRB5_LOCKMODE_EXCLUSIVE);
-    if (status != 0)
-        goto err_lock;
-    ulog_locked = 1;
+        /*
+         * Do not lock ulog except on the master.
+         * Slave DB reload times would be significantly impacted.
+         * Alternately, we could use a special iproprole to skip locking.
+         */
+        status = ulog_lock(kcontext, KRB5_LOCKMODE_EXCLUSIVE);
+        if (status != 0)
+            goto err_lock;
+        ulog_locked = 1;
+    }
 
     if (upd != NULL) {
         status = krb5_unparse_name(kcontext, entry->princ, &princ_name);

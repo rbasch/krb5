@@ -2921,6 +2921,9 @@ load_db(argc, argv)
         }
     }
 
+    if (log_ctx && log_ctx->iproprole && !(flags & FLAG_UPDATE))
+        log_ctx->iproprole = IPROP_NULL;
+
     if (restore_dump(progname, kcontext, (dumpfile) ? dumpfile : stdin_name,
                      f, flags, load)) {
         fprintf(stderr, restfail_fmt,
