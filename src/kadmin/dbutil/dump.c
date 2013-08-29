@@ -2691,6 +2691,7 @@ load_db(argc, argv)
     krb5_boolean        add_update = TRUE;
     uint32_t            caller = FKCOMMAND;
     uint32_t            last_sno, last_seconds, last_useconds;
+    iprop_role          iproprole = IPROP_NULL;
 
     /*
      * Parse the arguments.
@@ -2921,8 +2922,10 @@ load_db(argc, argv)
         }
     }
 
-    if (log_ctx && log_ctx->iproprole && !(flags & FLAG_UPDATE))
+    if (log_ctx && log_ctx->iproprole && !(flags & FLAG_UPDATE)) {
+        iproprole = IPROP_SLAVE;
         log_ctx->iproprole = IPROP_NULL;
+    }
 
     if (restore_dump(progname, kcontext, (dumpfile) ? dumpfile : stdin_name,
                      f, flags, load)) {
@@ -2967,7 +2970,7 @@ load_db(argc, argv)
         }
     }
     
-    if (log_ctx && log_ctx->iproprole && !(flags & FLAG_UPDATE) && !exit_status) {
+    if (log_ctx && iproprole && !(flags & FLAG_UPDATE) && !exit_status) {
         /*
          * Re-init the ulog with the new database information.
          */
@@ -2978,7 +2981,7 @@ load_db(argc, argv)
         log_ctx->ulog->kdb_state = KDB_STABLE;
         log_ctx->ulog->kdb_block = ULOG_BLOCK;
         
-        log_ctx->iproprole = IPROP_NULL;
+        log_ctx->iproprole = IPROP_SLAVE;
 
         if (!add_update) {
             log_ctx->ulog->kdb_last_sno = last_sno;
