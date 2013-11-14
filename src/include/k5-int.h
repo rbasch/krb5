@@ -194,6 +194,7 @@ typedef INT64_TYPE krb5_int64;
 #define KRB5_CONF_CANONICALIZE                   "canonicalize"
 #define KRB5_CONF_CCACHE_TYPE                    "ccache_type"
 #define KRB5_CONF_CLOCKSKEW                      "clockskew"
+#define KRB5_CONF_COMPAT_SKEY_NEGOTIATE          "compat_skey_negotiate"
 #define KRB5_CONF_DATABASE_NAME                  "database_name"
 #define KRB5_CONF_DB_MODULE_DIR                  "db_module_dir"
 #define KRB5_CONF_DEFAULT                        "default"

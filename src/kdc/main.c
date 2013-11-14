@@ -367,6 +367,12 @@ init_realm(kdc_realm_t *rdp, char *realm, char *def_mpname,
     rdp->realm_maxrlife = (rparams && rparams->realm_max_rlife_valid) ?
         rparams->realm_max_rlife : KRB5_KDB_MAX_RLIFE;
 
+    /* Handle session key negotiation (assume client ignores skey enctype) */
+    if (rparams && rparams->realm_compat_skey_negotiate_valid)
+        rdp->realm_compat_skey_negotiate = rparams->realm_compat_skey_negotiate;
+    else
+        rdp->realm_compat_skey_negotiate = 0;
+
     /* Handle KDC referrals */
     kret = handle_referral_params(rparams, no_refrls, host_based_srvcs, rdp);
     if (kret == ENOMEM)

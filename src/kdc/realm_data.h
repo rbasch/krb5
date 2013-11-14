@@ -78,6 +78,7 @@ typedef struct __kdc_realm_data {
     krb5_boolean        realm_reject_bad_transit; /* Accept unverifiable transited_realm ? */
     krb5_boolean        realm_restrict_anon;  /* Anon to local TGT only */
     krb5_boolean        realm_assume_des_crc_sess;  /* Assume princs support des-cbc-crc for session keys */
+    krb5_boolean        realm_compat_skey_neogtiate;  /* Assume skey is not negotiated with client */
 } kdc_realm_t;
 
 struct server_handle {

@@ -315,6 +315,8 @@ typedef struct __krb5_realm_params {
     unsigned int        realm_restrict_anon_valid:1;
     unsigned int        realm_assume_des_crc_sess:1;
     unsigned int        realm_assume_des_crc_sess_valid:1;
+    unsigned int        realm_compat_skey_negotiate:1;
+    unsigned int        realm_compat_skey_negotiate_valid:1;
     krb5_int32          realm_num_keysalts;
 } krb5_realm_params;
 

@@ -1105,6 +1105,12 @@ krb5_read_realm_params(kcontext, realm, rparamp)
         free(svalue);
     }
 
+    hierarchy[2] = KRB5_CONF_COMPAT_SKEY_NEGOTIATE;
+    if (!krb5_aprof_get_boolean(aprofile, hierarchy, TRUE, &bvalue)) {
+        rparams->realm_compat_skey_negotiate = bvalue;
+        rparams->realm_compat_skey_negotiate_valid = 1;
+    }
+
     rparams->realm_keysalts = NULL;
     rparams->realm_num_keysalts = 0;
 
