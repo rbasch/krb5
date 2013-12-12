@@ -37,6 +37,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 [\fB\-r\fP \fIrealm\fP]
 [\fB\-m\fP]
 [\fB\-nofork\fP]
+[\fB\-proponly\fP]
 [\fB\-port\fP \fIport\-number\fP]
 [\fB\-P\fP \fIpid_file\fP]
 [\fB\-p\fP \fIkdb5_util_path\fP]
@@ -97,6 +98,12 @@ disk.
 causes the server to remain in the foreground and remain
 associated to the terminal.  In normal operation, you should allow
 the server to place itself in the background.
+.TP
+.B \fB\-proponly\fP
+causes the server to only listen and respond to Kerberos slave
+incremental propagation polling requests. This option is most commonly
+used when setting up a hierarchical tree topology where one Kerberos
+slave provides incremental updates to other Kerberos slaves.
 .TP
 .B \fB\-port\fP \fIport\-number\fP
 specifies the port on which the administration server listens for

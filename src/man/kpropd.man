@@ -39,6 +39,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 [\fB\-F\fP \fIprincipal_database\fP]
 [\fB\-p\fP \fIkdb5_util_prog\fP]
 [\fB\-P\fP \fIport\fP]
+[\fB\-A\fP \fIadmin_server\fP]
 [\fB\-d\fP]
 .SH DESCRIPTION
 .sp
@@ -115,6 +116,12 @@ during the database propagation.
 .B \fB\-P\fP
 Allow for an alternate port number for kpropd to listen on.  This
 is only useful in combination with the \fB\-S\fP option.
+.TP
+.B \fB\-A\fP \fIadmin_server\fP
+Use an alternate Kerberos server to be contacted for incremental
+updates. Some large environments may prefer to setup a replication tree
+hierarchy rather than having every Kerberos slave contact the master
+admin server directly for updates.
 .TP
 .B \fB\-a\fP \fIacl_file\fP
 Allows the user to specify the path to the kpropd.acl file; by
