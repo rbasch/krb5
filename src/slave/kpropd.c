@@ -126,6 +126,7 @@ char    *srvtab = 0;
 int     standalone = 0;
 
 pid_t fullprop_child = (pid_t)-1;
+pid_t iprop_pid = (pid_t)-1;
 
 krb5_principal  server;         /* This is our server principal name */
 krb5_principal  client;         /* This is who we're talking to */
@@ -158,6 +159,8 @@ void    load_database(krb5_context, char *, char *);
 void    send_error(krb5_context, int, krb5_error_code, char *);
 void    recv_error(krb5_context, krb5_data *);
 unsigned int backoff_from_master(int *);
+
+static char *getclhoststr(const char *clprinc, char *cl, size_t len);
 
 static kadm5_ret_t
 kadm5_get_kiprop_host_srv_name(krb5_context context,
@@ -308,6 +311,7 @@ main(argc, argv)
     signal_wrapper(SIGSEGV, kill_do_standalone);
     signal_wrapper(SIGUSR1, usr1_handler);
     atexit(atexit_kill_do_standalone);
+    iprop_pid = getpid();
     fullprop_child = fork();
     switch (fullprop_child) {
     case -1:
@@ -626,6 +630,7 @@ do_iprop(kdb_log_context *log_ctx)
     unsigned long usec;
     time_t frrequested = 0;
     time_t now;
+    char localhost[MAXHOSTNAMELEN] = { 0 };
 
     kdb_incr_result_t *incr_ret;
     kdb_last_t mylast;
@@ -712,6 +717,14 @@ do_iprop(kdb_log_context *log_ctx)
         return retval;
     }
     krb5_free_principal(kpropd_context, iprop_svc_principal);
+
+    if (!getclhoststr(iprop_svc_princstr, localhost, sizeof(localhost))) {
+	retval = KRB5KRB_ERR_FIELD_TOOLONG;
+	com_err(progname, retval,
+		_("while extracting hostname from local service principal"));
+        krb5_free_principal(kpropd_context, iprop_svc_principal);
+        return retval;
+    }
 
 reinit:
     /*
@@ -1007,7 +1020,54 @@ reinit:
                 fprintf(stderr, _("Waiting for %d seconds before checking "
                                   "for updates again\n"), pollin);
             }
-            (void) sleep(pollin);
+            if (incr_ret && incr_ret->ret == UPDATE_OK) {
+                kadm5_iprop_handle_t handle2;
+                char *old_admin = params.admin_server;
+		char *svc_principal = NULL;
+                
+#if 0
+        	kadm5_destroy((void *)server_handle);
+		server_handle = (void *) NULL;
+		handle = (kadm5_iprop_handle_t) NULL;
+#endif
+
+		params.admin_server = localhost;
+
+		retval = kadm5_get_kiprop_host_srv_name(
+			kpropd_context, def_realm, &svc_principal);
+
+                /*
+                 * Notify downstream clients we received updates.
+                 * Connect to local kadmin (kiprop) and invoke the NULLPROC
+                 * procedure.
+                 */
+		if (!retval)
+                    retval = kadm5_init_with_skey(kpropd_context,
+                                              iprop_svc_princstr, srvtab,
+                                              svc_principal, &params,
+                                              KADM5_STRUCT_VERSION, KADM5_API_VERSION_4,
+                                              db_args, (void **)&handle2);
+
+                params.admin_server = old_admin;
+		free(svc_principal);
+
+                if (retval) {
+                    com_err(progname, retval,
+                            _("while connecting to local kiprop (svc=%s)"),
+                            iprop_svc_princstr);
+                    
+                } else {
+                    (void) iprop_null_1(NULL, handle2->clnt);
+                    kadm5_destroy((void *)handle2);
+                }
+
+                (void) sleep(pollin);
+#if 0
+		goto reinit;
+#endif
+            } else {
+                (void) sleep(pollin);
+            }
         }
 
     }
@@ -1641,7 +1701,13 @@ recv_error(context, inbuf)
     if (error->error == KRB_ERR_GENERIC) {
         if (error->text.data)
             fprintf(stderr, _("Generic remote error: %s\n"), error->text.data);
+        /* XXX - Should we allocate a krb5 error code for iprop notify? */
+        if (standalone && iprop_pid != (pid_t)-1)
+            kill(iprop_pid, SIGUSR1);
     } else if (error->error) {
+        /* XXX - Should we allocate a krb5 error code for iprop notify? */
+        if (standalone && iprop_pid != (pid_t)-1)
+            kill(iprop_pid, SIGUSR1);
         com_err(progname,
                 (krb5_error_code) error->error + ERROR_TABLE_BASE_krb5,
                 _("signaled from server"));
@@ -1753,4 +1819,21 @@ kadm5_get_kiprop_host_srv_name(krb5_context context,
     *host_service_name = name;
 
     return (KADM5_OK);
+}
+
+/*
+ * Given a client princ (foo/fqdn@R), copy (in arg cl) the fqdn substring.
+ * Return arg cl str ptr on success, else NULL.
+ */
+static char *
+getclhoststr(const char *clprinc, char *cl, size_t len)
+{
+    const char *s, *e;
+
+    if ((s = strchr(clprinc, '/')) == NULL || (e = strchr(++s, '@')) == NULL ||
+	(size_t)(e - s) >= len)
+	return NULL;
+    memcpy(cl, s, e - s);
+    cl[e - s] = '\0';
+    return (cl);
 }
