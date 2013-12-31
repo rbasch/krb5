@@ -1025,12 +1025,6 @@ reinit:
                 char *old_admin = params.admin_server;
 		char *svc_principal = NULL;
                 
-#if 0
-        	kadm5_destroy((void *)server_handle);
-		server_handle = (void *) NULL;
-		handle = (kadm5_iprop_handle_t) NULL;
-#endif
-
 		params.admin_server = localhost;
 
 		retval = kadm5_get_kiprop_host_srv_name(
@@ -1060,14 +1054,8 @@ reinit:
                     (void) iprop_null_1(NULL, handle2->clnt);
                     kadm5_destroy((void *)handle2);
                 }
-
-                (void) sleep(pollin);
-#if 0
-		goto reinit;
-#endif
-            } else {
-                (void) sleep(pollin);
             }
+            (void) sleep(pollin);
         }
 
     }

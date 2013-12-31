@@ -764,10 +764,8 @@ void ipropx_notify_clients(krb5_context context)
 	 * per slave (but it is theoretically possible because we are
 	 * creating sub-processes and is subject to the scheduler).
 	 *
-	 * More likely, the concurrency might result in a race condition
-	 * whereby multiple children attempt to retrieve updates and we
-	 * must respond with UPDATE_BUSY because of contention. A site
-	 * with lots of slaves should use the tree propagation features.
+	 * For environments with lots of slaves, tree propagation should
+	 * be used (especially since most locks are blocking).
 	 */
 	child = fork();
 	if (child == 0) {
