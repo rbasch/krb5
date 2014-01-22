@@ -214,7 +214,7 @@ iprop_get_updates_1_svc(kdb_last_t *arg, struct svc_req *rqstp)
     if (getclhoststr(client_name, clhost, sizeof (clhost))) {
 	if (ret.ret == UPDATE_OK)
 	    ipropx_client_add(handle->context, clhost, ret.lastentry.last_sno, ret.lastentry.last_sno);
-	else if (ret.ret == UPDATE_NIL)
+	else if (ret.ret == UPDATE_NIL || ret.ret == UPDATE_BUSY)
 	    ipropx_client_add(handle->context, clhost, arg->last_sno, arg->last_sno);
     }
 

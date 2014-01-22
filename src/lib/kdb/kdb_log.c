@@ -644,18 +644,7 @@ ulog_get_entries(krb5_context context, kdb_last_t last,
     INIT_ULOG(context);
     ulogentries = log_ctx->ulogentries;
 
-    retval = ulog_lock(context, KRB5_LOCKMODE_SHARED | KRB5_LOCKMODE_DONTBLOCK);
-    if (0
-#ifdef EWOULDBLOCK
-        || retval == EWOULDBLOCK
-#endif
-#ifdef EAGAIN
-        || retval == EAGAIN
-#endif
-        ) {
-        ulog_handle->ret = UPDATE_BUSY;
-        return 0;
-    }
+    retval = ulog_lock(context, KRB5_LOCKMODE_SHARED);
     if (retval)
         return retval;
 
