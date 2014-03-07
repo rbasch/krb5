@@ -257,8 +257,7 @@ propagation is enabled.  The default value is false.
 .TP
 .B \fBiprop_master_ulogsize\fP
 (Integer.)  Specifies the maximum number of log entries to be
-retained for incremental propagation.  The maximum value is 2500;
-the default value is 1000.
+retained for incremental propagation.  The default value is 1000.
 .TP
 .B \fBiprop_slave_poll\fP
 (Delta time string.)  Specifies how often the slave KDC polls for
