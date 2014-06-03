@@ -410,10 +410,20 @@ kdc_rd_ap_req(kdc_realm_t *kdc_active_realm,
         if (retval)
             return retval;
 
+        /*
+         * Instead of having krb5_rd_req_decoded_anyflag populate the ticket,
+         * which would only if there is no error, we will copy the ticket
+         * after the call (based on the decoded apreq structure). This will
+         * ensure we will have the client principal even in the event of
+         * errors such as "Ticket expired".
+         */
         retval = krb5_rd_req_decoded_anyflag(kdc_context, &auth_context, apreq,
                                              apreq->ticket->server,
                                              kdc_active_realm->realm_keytab,
-                                             NULL, ticket);
+                                             NULL, NULL);
+        if (ticket && apreq->ticket->enc_part2)
+            krb5_copy_ticket(kdc_context, apreq->ticket, ticket);
+
     } while (retval && apreq->ticket->enc_part.kvno == 0 && kvno-- > 1 &&
              --tries > 0);
 

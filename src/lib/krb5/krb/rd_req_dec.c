@@ -561,14 +561,17 @@ rd_req_decoded_opt(krb5_context context, krb5_auth_context *auth_context,
             *ap_req_options |= AP_OPTS_USE_SUBKEY;
     }
 
-    retval = 0;
-
 cleanup:
     if (desired_etypes != NULL)
         free(desired_etypes);
     if (permitted_etypes != NULL &&
         permitted_etypes != (*auth_context)->permitted_etypes)
         free(permitted_etypes);
+#if 0
+    /*
+     * Apps should call krb5_free_ap_req, so this should not be required.
+     * Some apps need the decrypted output even in error conditions.
+     */
     if (retval) {
         /* only free if we're erroring out...otherwise some
            applications will need the output. */
@@ -576,6 +579,7 @@ cleanup:
             krb5_free_enc_tkt_part(context, req->ticket->enc_part2);
         req->ticket->enc_part2 = NULL;
     }
+#endif
     if (check_valid_flag)
         krb5_free_keyblock_contents(context, &decrypt_key);
 
