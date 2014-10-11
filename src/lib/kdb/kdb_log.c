@@ -113,6 +113,11 @@ get_sno_status(kdb_log_context *log_ctx, const kdb_last_t *last)
         time_equal(&last->last_time, &ulog->kdb_last_time))
         return UPDATE_NIL;
 
+    /* Check against the first sno, which may not be in the ulog. */
+    if (last->last_sno == ulog->kdb_first_sno &&
+        time_equal(&last->last_time, &ulog->kdb_first_time))
+        return UPDATE_OK;
+
     /* If our ulog is empty or does not contain last_sno, a full resync is
      * required. */
     if (ulog->kdb_num == 0 || last->last_sno > ulog->kdb_last_sno ||
@@ -283,11 +288,12 @@ store_update(kdb_log_context *log_ctx, kdb_incr_update_t *upd)
     /* Modify the ulog header to reflect the new update. */
     ulog->kdb_last_sno = upd->kdb_entry_sno;
     ulog->kdb_last_time = upd->kdb_time;
-    if (ulog->kdb_num == 0) {
-        ulog->kdb_num = 1;
-        ulog->kdb_first_sno = upd->kdb_entry_sno;
-        ulog->kdb_first_time = upd->kdb_time;
-    } else if (ulog->kdb_num < ulogentries) {
+    if (ulog->kdb_num < ulogentries) {
+        if (ulog->kdb_num == 0 &&
+            (ulog->kdb_first_sno == 0 || ulog->kdb_first_sno != upd->kdb_entry_sno - 1)) {
+            ulog->kdb_first_sno = upd->kdb_entry_sno;
+            ulog->kdb_first_time = upd->kdb_time;
+        }
         ulog->kdb_num++;
     } else {
         /* We are circling; set kdb_first_sno and time to the next update. */
@@ -504,12 +510,18 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries)
 
     /* Reinit ulog if ulogentries changed such that we have too many entries or
      * our first or last entry was written to the wrong location. */
-    if (ulog->kdb_num != 0 &&
-        (ulog->kdb_num > ulogentries ||
-         !check_sno(log_ctx, ulog->kdb_first_sno, &ulog->kdb_first_time) ||
-         !check_sno(log_ctx, ulog->kdb_last_sno, &ulog->kdb_last_time))) {
-        reset_header(ulog);
-        sync_header(ulog);
+    if (ulog->kdb_num != 0) {
+        if (ulog->kdb_num > ulogentries ||
+            ulog->kdb_first_sno > ulog->kdb_last_sno ||
+            !check_sno(log_ctx, ulog->kdb_last_sno, &ulog->kdb_last_time) ||
+            ulog->kdb_first_sno < ulog->kdb_last_sno - ulog->kdb_num ||
+            ulog->kdb_first_sno > ulog->kdb_last_sno - ulog->kdb_num + 1 ||
+            (ulog->kdb_last_sno - ulog->kdb_num + 1 == ulog->kdb_first_sno &&
+             !check_sno(log_ctx, ulog->kdb_first_sno, &ulog->kdb_first_time)))
+            {
+                reset_header(ulog);
+                sync_header(ulog);
+            }
     }
 
     if (ulog->kdb_num != ulogentries) {
@@ -651,6 +663,10 @@ ulog_set_last(krb5_context context, const kdb_last_t *last)
         return ret;
     ulog->kdb_last_sno = last->last_sno;
     ulog->kdb_last_time = last->last_time;
+    if (ulog->kdb_num == 0) {
+        ulog->kdb_first_sno = last->last_sno;
+        ulog->kdb_first_time = last->last_time;
+    }
     sync_header(ulog);
     unlock_ulog(context);
     return 0;
