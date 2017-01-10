@@ -62,6 +62,7 @@ extern "C" {
 krb5_error_code ulog_map(krb5_context context, const char *logname,
                          uint32_t entries);
 krb5_error_code ulog_init_header(krb5_context context);
+krb5_error_code ulog_init_header2(krb5_context context, unsigned int recsize);
 krb5_error_code ulog_add_update(krb5_context context, kdb_incr_update_t *upd);
 krb5_error_code ulog_get_entries(krb5_context context, const kdb_last_t *last,
                                  kdb_incr_result_t *ulog_handle);

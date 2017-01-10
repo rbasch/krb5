@@ -90,6 +90,7 @@ krb5_db_promote
 krb5_db_register_keytab
 ulog_add_update
 ulog_init_header
+ulog_init_header2
 ulog_map
 ulog_set_role
 ulog_free_entries

@@ -33,6 +33,7 @@
 #include <kadm5/server_internal.h>
 #include <kdb.h>
 #include <com_err.h>
+#include <kdb_log.h>
 #include "kdb5_util.h"
 #if defined(HAVE_REGEX_H) && defined(HAVE_REGCOMP)
 #include <regex.h>
@@ -1659,7 +1660,7 @@ load_db(int argc, char **argv)
         /* Initialize the ulog header before promoting so we can't leave behind
          * the pre-load ulog state if we are killed just after promoting. */
         if (log_ctx != NULL && log_ctx->iproprole) {
-            ret = ulog_init_header(util_context);
+            ret = ulog_init_header2(util_context, ULOG_BLOCK);
             if (ret) {
                 com_err(progname, ret, _("while reinitializing update log"));
                 goto error;

@@ -221,15 +221,30 @@ set_dummy(kdb_log_context *log_ctx, kdb_sno_t sno, const kdbe_time_t *kdb_time)
 
 /* Reinitialize the ulog header, starting from sno 1 with the current time. */
 static void
-reset_ulog(kdb_log_context *log_ctx)
+reset_ulog(kdb_log_context *log_ctx, unsigned int recsize)
 {
     kdbe_time_t kdb_time;
     kdb_hlog_t *ulog = log_ctx->ulog;
+    unsigned int block_size = 0;
+
+    if (recsize == 0) {
+        if (ulog->kdb_hmagic == KDB_ULOG_HDR_MAGIC &&
+            ulog->db_version_num == KDB_VERSION &&
+            ulog->kdb_block >= ULOG_BLOCK &&
+            (ulog->kdb_block % ULOG_BLOCK) == 0)
+            block_size = ulog->kdb_block;
+        else
+            block_size = ULOG_BLOCK;
+    } else if (recsize > ULOG_BLOCK) {
+        block_size = ULOG_BLOCK * (1 + (recsize-1)/ULOG_BLOCK);
+    } else {
+        block_size = ULOG_BLOCK;
+    }
 
     memset(ulog, 0, sizeof(*ulog));
     ulog->kdb_hmagic = KDB_ULOG_HDR_MAGIC;
     ulog->db_version_num = KDB_VERSION;
-    ulog->kdb_block = ULOG_BLOCK;
+    ulog->kdb_block = block_size;
 
     /* Create a dummy entry to remember the timestamp for downstreams. */
     time_current(&kdb_time);
@@ -345,7 +360,7 @@ ulog_add_update(krb5_context context, kdb_incr_update_t *upd)
     /* If we have reached the last possible serial number, reinitialize the
      * ulog and start over.  Slaves will do a full resync. */
     if (ulog->kdb_last_sno == (kdb_sno_t)-1)
-        reset_ulog(log_ctx);
+        reset_ulog(log_ctx, ulog->kdb_block);
 
     upd->kdb_entry_sno = ulog->kdb_last_sno + 1;
     time_current(&upd->kdb_time);
@@ -394,7 +409,7 @@ ulog_replay(krb5_context context, kdb_incr_result_t *incr_ret, char **db_args)
         /* If (unexpectedly) this update does not follow the last one we
          * stored, discard any previous ulog state. */
         if (ulog->kdb_num != 0 && upd->kdb_entry_sno != ulog->kdb_last_sno + 1)
-            reset_ulog(log_ctx);
+            reset_ulog(log_ctx, ulog->kdb_block);
 
         if (upd->kdb_deleted) {
             dbprincstr = k5memdup0(upd->kdb_princ_name.utf8str_t_val,
@@ -435,7 +450,7 @@ cleanup:
     if (fupd)
         ulog_free_entries(fupd, no_of_updates);
     if (retval)
-        reset_ulog(log_ctx);
+        reset_ulog(log_ctx, log_ctx->ulog->kdb_block);
     unlock_ulog(context);
     krb5_db_unlock(context);
     return retval;
@@ -445,6 +460,11 @@ cleanup:
 krb5_error_code
 ulog_init_header(krb5_context context)
 {
+    return ulog_init_header2(context, 0);
+}
+krb5_error_code
+ulog_init_header2(krb5_context context, unsigned int recsize)
+{
     krb5_error_code ret;
     kdb_log_context *log_ctx;
     kdb_hlog_t *ulog;
@@ -453,7 +473,7 @@ ulog_init_header(krb5_context context)
     ret = lock_ulog(context, KRB5_LOCKMODE_EXCLUSIVE);
     if (ret)
         return ret;
-    reset_ulog(log_ctx);
+    reset_ulog(log_ctx, recsize);
     unlock_ulog(context);
     return 0;
 }
@@ -518,7 +538,7 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries)
             unlock_ulog(context);
             return KRB5_LOG_CORRUPT;
         }
-        reset_ulog(log_ctx);
+        reset_ulog(log_ctx, ULOG_BLOCK);
     }
 
     /* Reinit ulog if ulogentries changed such that we have too many entries or
@@ -527,7 +547,7 @@ ulog_map(krb5_context context, const char *logname, uint32_t ulogentries)
         (ulog->kdb_num > ulogentries ||
          !check_sno(log_ctx, ulog->kdb_first_sno, &ulog->kdb_first_time) ||
          !check_sno(log_ctx, ulog->kdb_last_sno, &ulog->kdb_last_time)))
-        reset_ulog(log_ctx);
+        reset_ulog(log_ctx, ULOG_BLOCK);
 
     if (ulog->kdb_num != ulogentries) {
         /* Expand the ulog file if it isn't big enough. */
@@ -567,7 +587,7 @@ ulog_get_entries(krb5_context context, const kdb_last_t *last,
     /* If another process terminated mid-update, reset the ulog and force full
      * resyncs. */
     if (ulog->kdb_state != KDB_STABLE)
-        reset_ulog(log_ctx);
+        reset_ulog(log_ctx, ulog->kdb_block);
 
     ulog_handle->ret = get_sno_status(log_ctx, last);
     if (ulog_handle->ret != UPDATE_OK)

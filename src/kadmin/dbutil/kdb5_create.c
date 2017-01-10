@@ -58,6 +58,7 @@
 #include <kadm5/server_internal.h>
 #include <kadm5/admin.h>
 #include <adm_proto.h>
+#include <kdb_log.h>
 #include "kdb5_util.h"
 
 enum ap_op {
@@ -299,7 +300,7 @@ void kdb5_create(argc, argv)
          * We're reinitializing the update log in case one already
          * existed, but this should never happen.
          */
-        retval = ulog_init_header(util_context);
+        retval = ulog_init_header2(util_context, ULOG_BLOCK);
         if (retval) {
             com_err(argv[0], retval, _("while initializing update log"));
             exit_status++;
