@@ -119,6 +119,7 @@ static int debug = 0;
 static int nodaemon = 0;
 static char *srvtab = NULL;
 static int standalone = 0;
+static int incr_only = 0;
 
 static pid_t fullprop_child = (pid_t)-1;
 static pid_t iprop_pid = (pid_t)-1;
@@ -173,7 +174,7 @@ usage()
             progname);
     fprintf(stderr, _("\t[-F kerberos_db_file ] [-p kdb5_util_pathname]\n"));
     fprintf(stderr, _("\t[-x db_args]* [-P port] [-a acl_file]\n"));
-    fprintf(stderr, _("\t[-A admin_server]\n"));
+    fprintf(stderr, _("\t[-A admin_server] [-I]\n"));
     exit(1);
 }
 
@@ -808,6 +809,14 @@ reinit:
                     fprintf(stderr, _("Still waiting for full resync\n"));
                 break;
             } else {
+                if (incr_only) {
+                    if (debug)
+                        fprintf(stderr, _("Full resync needed but disallowed\n"));
+                    syslog(LOG_ERR, _("kpropd: Full resync needed but disallowed"));
+                    backoff_cnt++;
+                    break;
+                }
+                
                 frrequested = now;
                 if (debug)
                     fprintf(stderr, _("Full resync needed\n"));
@@ -1095,6 +1104,9 @@ parse_args(char **argv)
                 if (params.admin_server == NULL)
                     usage();
                 word = NULL;
+                break;
+            case 'I':
+                incr_only = 1;
                 break;
             case 'f':
                 file = (*word != '\0') ? word : *argv++;

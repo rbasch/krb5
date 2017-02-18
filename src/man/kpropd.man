@@ -35,6 +35,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 \fBkpropd\fP
 [\fB\-r\fP \fIrealm\fP]
 [\fB\-A\fP \fIadmin_server\fP]
+[\fB\-I\fP]
 [\fB\-a\fP \fIacl_file\fP]
 [\fB\-f\fP \fIslave_dumpfile\fP]
 [\fB\-F\fP \fIprincipal_database\fP]
@@ -103,6 +104,9 @@ Specifies the realm of the master server.
 .B \fB\-A\fP \fIadmin_server\fP
 Specifies the server to be contacted for incremental updates; by
 default, the master admin server is contacted.
+.TP
+.B \fB\-I\fP
+Allow incremental updates only, not full database resynchronization events.
 .TP
 .B \fB\-f\fP \fIfile\fP
 Specifies the filename where the dumped principal database file is
